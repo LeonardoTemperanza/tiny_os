@@ -1,6 +1,6 @@
 
 [build]
-target = "tinyos_x64_target"
+target = "tinyos_x64_target.json"
 
 [unstable]
 build-std = ["core", "compiler_builtins"]
