@@ -29,7 +29,7 @@
 				"RUSTFLAGS": "-A dead_code -A unused_variables -A unused_imports -A unused_assignments",
 			},
 
-			"shell_cmd": "cargo build",
+			"shell_cmd": "cargo run",
             /*"working_dir": "${file_path}",*/
 		},
 		{
