@@ -26,11 +26,12 @@ pub extern "C" fn _start() -> !
     interrupts::init_idt();
     println!("Interrupt Descriptor Table initialized.");
 
-    // Trigger a page fault
-    unsafe
+    fn stack_overflow()
     {
-        *(0xdeadbeef as *mut u8) = 42;
+        stack_overflow();
     }
+
+    stack_overflow();
 
     println!("I'm still running bro");
 
