@@ -11,10 +11,12 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-bootloader = "0.9"
-volatile   = "0.2.6"
-spin       = "0.5.2"
-x86_64     = "0.14.2"
+bootloader  = "0.9"
+volatile    = "0.2.6"
+spin        = "0.5.2"
+x86_64      = "0.14.2"
+pic8259     = "0.10.1"
+pc-keyboard = "0.7.0"
 
 [dependencies.lazy_static]
 version = "1.0"

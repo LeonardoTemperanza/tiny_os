@@ -21,21 +21,28 @@ fn panic(_info: &PanicInfo) -> !
 static HELLO: &[u8] = b"Hello World!";
 
 #[no_mangle]
-pub extern "C" fn _start() -> !
-{    
+pub extern "C" fn _start()->!
+{
+    kernel_main();
+}
+
+fn kernel_main()->!
+{
     interrupts::init_idt();
     println!("Interrupt Descriptor Table initialized.");
 
-    fn stack_overflow()
-    {
-        stack_overflow();
-    }
+    interrupts::init_gdt();
+    println!("Global Descriptor Table initalized.");
 
-    stack_overflow();
+    x86_64::instructions::interrupts::enable();
 
-    println!("I'm still running bro");
+    println!("Reached end of kernel main.");
+    halt_loop();
+}
 
-    loop {}
+fn halt_loop()->!
+{
+    loop { x86_64::instructions::hlt(); }
 }
 
 #[allow(dead_code)]
