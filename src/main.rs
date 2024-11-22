@@ -21,12 +21,12 @@ fn panic(_info: &PanicInfo) -> !
 static HELLO: &[u8] = b"Hello World!";
 
 #[no_mangle]
-pub extern "C" fn _start()->!
+pub extern "C" fn _start() -> !
 {
     kernel_main();
 }
 
-fn kernel_main()->!
+fn kernel_main() -> !
 {
     interrupts::init_idt();
     println!("Interrupt Descriptor Table initialized.");
@@ -34,13 +34,21 @@ fn kernel_main()->!
     interrupts::init_gdt();
     println!("Global Descriptor Table initalized.");
 
+    // PICS Initialized
+    unsafe { interrupts::PICS.lock().initialize() };
+    println!("PICS initialized");
+
     x86_64::instructions::interrupts::enable();
+
+    use x86_64::registers::control::Cr3;
+    let (level_4_page_table, _) = Cr3::read();
+    println!("Level 4 page table at: {:?}", level_4_page_table.start_address());    
 
     println!("Reached end of kernel main.");
     halt_loop();
 }
 
-fn halt_loop()->!
+fn halt_loop() -> !
 {
     loop { x86_64::instructions::hlt(); }
 }
@@ -200,7 +208,8 @@ macro_rules! println
 }
 
 #[doc(hidden)]
-pub fn _print(args: fmt::Arguments) {
+pub fn _print(args: fmt::Arguments)
+{
     use core::fmt::Write;
     WRITER.lock().write_fmt(args).unwrap();
 }

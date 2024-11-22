@@ -1,6 +1,6 @@
 
 use x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor, SegmentSelector};
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use x86_64::structures::tss::{TaskStateSegment};
 use x86_64::VirtAddr;
 use x86_64::registers::segmentation::CS;
@@ -28,7 +28,7 @@ lazy_static!
         let mut gdt = GlobalDescriptorTable::new();
         let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
         let tss_selector  = gdt.add_entry(Descriptor::tss_segment(&TSS));
-        return (gdt, Selectors { code_selector, tss_selector });
+        (gdt, Selectors { code_selector, tss_selector })
     };
 }
 
@@ -39,6 +39,9 @@ lazy_static!
     {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
+        idt.page_fault.set_handler_fn(page_fault_handler);
+        idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
+
         unsafe
         {
             idt.double_fault
@@ -46,15 +49,11 @@ lazy_static!
                 .set_stack_index(DOUBLE_FAULT_IST_IDX);
         }
 
-        idt.double_fault.set_handler_fn(double_fault_handler);
 
-        // Hardware interrupt
+        // Hardware interrupts
         idt[InterruptIdx::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIdx::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
-
-
-
-        return idt;
+        idt
     };
 }
 
@@ -74,7 +73,7 @@ lazy_static!
             stack_end  // In x86 stacks grow downwards
         };
 
-        return tss;
+        tss
     };
 }
 
@@ -104,63 +103,73 @@ pub fn init_pics()
 ////////
 // Interrupt handlers
 
-extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame)
-{
+extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     println!("Exception: Breakpoint\n{:#?}", stack_frame);
 }
 
-extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) -> !
-{
-    panic!("Exception: Double Fault (error code: {})\n{:#?}", _error_code, stack_frame);
+extern "x86-interrupt" fn double_fault_handler(
+    stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) -> ! {
+    panic!("Exception: Double Fault\n{:#?}", stack_frame);
 }
 
-extern "x86-interrupt" fn keyboard_interrupt_handler(stack_frame: InterruptStackFrame)
+extern "x86-interrupt" fn general_protection_fault_handler(
+    stack_frame: InterruptStackFrame, error_code: u64)
 {
+    println!("Exception: General Protection Fault\n{:#?}", stack_frame);
+}
+
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    print!(".");
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIdx::Timer.as_u8());
+    }
+}
+
+extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
     use spin::Mutex;
     use x86_64::instructions::port::Port;
 
-    lazy_static!
-    {
+    lazy_static! {
         static ref KEYBOARD: Mutex<Keyboard<layouts::Us104Key, ScancodeSet1>> =
-            Mutex::new(Keyboard::new(ScancodeSet1::new(),
-                                     layouts::Us104Key, HandleControl::Ignore));
+            Mutex::new(Keyboard::new(
+                ScancodeSet1::new(),
+                layouts::Us104Key,
+                HandleControl::Ignore
+            ));
     }
 
     let mut keyboard = KEYBOARD.lock();
     let mut port = Port::new(0x60);
 
     let scancode: u8 = unsafe { port.read() };
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
-    {
-        if let Some(key) = keyboard.process_keyevent(key_event)
-        {
-            match key
-            {
+    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+        if let Some(key) = keyboard.process_keyevent(key_event) {
+            match key {
                 DecodedKey::Unicode(character) => print!("{}", character),
                 DecodedKey::RawKey(key) => print!("{:?}", key),
             }
         }
     }
 
-    // The PIC needs a notifications for the end of the interrupt
-    unsafe
-    {
+    unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIdx::Keyboard.as_u8());
     }
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame)
+extern "x86-interrupt" fn page_fault_handler(stack_frame: InterruptStackFrame, error_code: PageFaultErrorCode)
 {
-    print!(".");
+    use x86_64::registers::control::Cr2;
 
-    // The pic controller needs a notifications for the end of the interrupt
-    unsafe
-    {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIdx::Timer.as_u8());
-    }
+    println!("Exception: Page Fault");
+    println!("Accessed Address: {:?}", Cr2::read());
+    println!("Error Code: {:?}", error_code);
+    println!("{:#?}", stack_frame);
+    crate::halt_loop();
 }
 
 ////////
@@ -183,11 +192,11 @@ impl InterruptIdx
 {
     fn as_u8(self)->u8
     {
-        return self as u8;
+        self as u8
     }
 
     fn as_usize(self)->usize
     {
-        return usize::from(self.as_u8());
+        usize::from(self.as_u8())
     }
 }
