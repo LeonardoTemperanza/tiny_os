@@ -9,24 +9,40 @@ use core::fmt::Write;
 use volatile::Volatile;
 use lazy_static::lazy_static;
 use spin::Mutex;
+
 mod interrupts;
+mod memory;
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> !
+use bootloader::{BootInfo, entry_point};
+
+entry_point!(kernel_main);
+
+fn kernel_main(boot_info: &'static BootInfo) -> !
 {
-    println!("{}", _info);    
-    loop {}
+    kernel_init(boot_info);
+
+    use x86_64::VirtAddr;
+    use x86_64::structures::paging::{OffsetPageTable, Mapper, Translate};
+
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+
+    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let mut frame_allocator = memory::EmptyFrameAllocator;
+
+    // Map an unused page
+    use x86_64::structures::paging::Page;
+    //let page = Page::containing_address(VirtAddr::new(0));
+    let page = Page::containing_address(VirtAddr::new(0xdeadbeef000));
+    memory::create_example_mapping(page, &mut mapper, &mut frame_allocator);
+
+    let page_ptr: *mut u64 = page.start_address().as_mut_ptr();
+    unsafe { page_ptr.offset(400).write_volatile(0x_f021_f077_f065_f04e)};
+
+    println!("Reached end of kernel main.");
+    halt_loop();
 }
 
-static HELLO: &[u8] = b"Hello World!";
-
-#[no_mangle]
-pub extern "C" fn _start() -> !
-{
-    kernel_main();
-}
-
-fn kernel_main() -> !
+fn kernel_init(boot_info: &'static BootInfo)
 {
     interrupts::init_idt();
     println!("Interrupt Descriptor Table initialized.");
@@ -39,12 +55,12 @@ fn kernel_main() -> !
     println!("PICS initialized");
 
     x86_64::instructions::interrupts::enable();
+}
 
-    use x86_64::registers::control::Cr3;
-    let (level_4_page_table, _) = Cr3::read();
-    println!("Level 4 page table at: {:?}", level_4_page_table.start_address());    
-
-    println!("Reached end of kernel main.");
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> !
+{
+    println!("{}", _info);    
     halt_loop();
 }
 
