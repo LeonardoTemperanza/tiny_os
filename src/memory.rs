@@ -2,10 +2,14 @@
 use x86_64::
 {
     structures::paging::*,
+    structures::paging::mapper::MapToError,
     VirtAddr, PhysAddr
 };
 
 use bootloader::bootinfo::*;
+
+use core::ptr::null_mut;
+use alloc::alloc::{GlobalAlloc, Layout};
 
 pub unsafe fn init(phys_mem_offset: VirtAddr)->OffsetPageTable<'static>
 {
@@ -109,4 +113,64 @@ impl BootInfoFrameAllocator
             next: 0,
         };
     }
+
+    fn usable_frames(&self)->impl Iterator<Item = PhysFrame>
+    {
+        let regions = self.memory_map.iter();
+        let usable_regions = regions.filter(|r| r.region_type == MemoryRegionType::Usable);
+        let addr_ranges = usable_regions.map(|r| r.range.start_addr()..r.range.end_addr());
+        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
+        return frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)));
+    }
+}
+
+unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator
+{
+    fn allocate_frame(&mut self)->Option<PhysFrame>
+    {
+        let frame = self.usable_frames().nth(self.next);
+        self.next += 1;
+        return frame;
+    }
+}
+
+// Dummy allocator used for global allocations
+
+pub const HEAP_START: usize = 0x_4444_4444_0000;
+pub const HEAP_SIZE: usize = 100 * 1024;
+
+#[global_allocator]
+static ALLOCATOR: linked_list_allocator::LockedHeap = linked_list_allocator::LockedHeap::empty();
+
+pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
+                 frame_allocator: &mut impl FrameAllocator<Size4KiB>)->Result<(), MapToError<Size4KiB>>
+{
+    let page_range = {
+        let heap_start = VirtAddr::new(HEAP_START as u64);
+        let heap_end = heap_start + HEAP_SIZE - 1u64;
+        let heap_start_page = Page::containing_address(heap_start);
+        let heap_end_page = Page::containing_address(heap_end);
+        Page::range_inclusive(heap_start_page, heap_end_page)
+    };
+
+    // Map all heap pages to physical frames
+    for page in page_range
+    {
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(MapToError::FrameAllocationFailed)?;
+
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        unsafe
+        {
+            mapper.map_to(page, frame, flags, frame_allocator)?.flush()
+        }
+    }
+
+    unsafe
+    {
+        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+    }
+
+    return Ok(());
 }

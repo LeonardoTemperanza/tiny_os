@@ -3,12 +3,17 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
 use core::panic::PanicInfo;
 use core::fmt;
 use core::fmt::Write;
 use volatile::Volatile;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use alloc::boxed::Box;
+
+use alloc::{vec, vec::Vec, rc::Rc};
 
 mod interrupts;
 mod memory;
@@ -22,21 +27,35 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
     kernel_init(boot_info);
 
     use x86_64::VirtAddr;
-    use x86_64::structures::paging::{OffsetPageTable, Mapper, Translate};
+    use x86_64::structures::paging::{OffsetPageTable, Mapper, Translate, Page};
+    use alloc::rc::Rc;
+    use alloc::vec;
 
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = memory::EmptyFrameAllocator;
+    let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
-    // Map an unused page
-    use x86_64::structures::paging::Page;
-    //let page = Page::containing_address(VirtAddr::new(0));
-    let page = Page::containing_address(VirtAddr::new(0xdeadbeef000));
-    memory::create_example_mapping(page, &mut mapper, &mut frame_allocator);
+    memory::init_heap(&mut mapper, &mut frame_allocator).expect("Heap initialization failed.");
 
-    let page_ptr: *mut u64 = page.start_address().as_mut_ptr();
-    unsafe { page_ptr.offset(400).write_volatile(0x_f021_f077_f065_f04e)};
+    let heap_value = Box::new(41);
+    println!("Heap value at {:p}", heap_value);
+
+    let mut vec = Vec::new();
+    for i in 0..500
+    {
+        vec.push(i);
+    }
+    println!("Vec at {:p}", vec.as_slice());
+
+    // Create a reference counted vector -> will be freed when count reaches 0
+    let reference_counted = Rc::new(vec![1, 2, 3]);
+    let cloned_reference = reference_counted.clone();
+    println!("Current reference count is {}", Rc::strong_count(&cloned_reference));
+    core::mem::drop(reference_counted);
+    println!("Reference count is {} now", Rc::strong_count(&cloned_reference));
+
+    let x = Box::new(41);
 
     println!("Reached end of kernel main.");
     halt_loop();
