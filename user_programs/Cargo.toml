@@ -1,0 +1,15 @@
+
+[package]
+name = "user_programs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "simple_test"
+test = false
+bench = false
+path = "src/simple_test.rs"
+
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"]
