@@ -3,26 +3,45 @@ use std::fs;
 use std::process::Command;
 use std::path::{Path, PathBuf};
 
+// This build program runs cargo to build the user programs and
+// then embeds the binaries into the kernel. (This is just a replacement
+// to get user processes up and running until a get a file system working.)
 fn main()
 {
-    let userspace_dir = Path::new("../userspace");
-    let programs = find_programs(userspace_dir);
+    // Get list of programs from the /src directory in the user_programs workspace
+    let programs = fs::read_dir("../user_programs/src").unwrap();
 
-}
+    let args = ["build",
+                "--release"];
 
-fn find_programs(userspace_dir: &Path)->Vec<PathBuf>
-{
-    let mut res = Vec::new();
+    let status = Command::new("cargo")
+        .args(args)
+        .current_dir("../user_programs")
+        .status()
+        .expect("Failed to build userspace programs");
 
-    if let Ok(entries) = fs::read_dir(userspace_dir)
+    if !status.success() { panic!("Building userspace programs failed"); }
+
+    let binary_path = format!("../target/tinyos_x64_target/release/");
+    for entry in programs
     {
-        for entry in entries.flatten()
+        if let Ok(entry) = entry
         {
-            let path = entry.path();
-            if path.is_dir() && path.join("Cargo.toml").exists()
-            {
-                programs.push(path)
-            }
+            println!("{:?}", entry.file_name());
         }
     }
+
+    /*
+    let meta = String::from("let ");
+    program_list.push_str(&format!(
+                          "    UserProgram {{ name: \"{}\", data: include_bytes!(\"{}\") }},\n",
+                          binary_name, binary_path));
+
+    program_list.push_str("];\n");
+    fs::write("src/embedded_programs.rs", program_list)
+        .expect("Failed to write embedded programs list");
+
+    // Rerun if anything changes
+    println!("cargo:rerun-if-chagned=../userspace");
+    */
 }

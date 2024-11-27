@@ -125,6 +125,7 @@ name = "user_programs"
 version = "0.1.0"
 dependencies = [
  "lazy_static",
+ "tinyos_userlib",
 ]
 
 [[package]]
