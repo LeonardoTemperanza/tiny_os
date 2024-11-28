@@ -40,7 +40,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
 
     memory::init_heap(&mut mapper, &mut frame_allocator).expect("Heap initialization failed.");
 
-    processes::parse_elf_binary(processes::USER_PROGRAM);
+    processes::launch_process_from_elf(processes::USER_PROGRAM);
 
     println!("Reached end of kernel main.");
     halt_loop();

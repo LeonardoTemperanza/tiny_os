@@ -3,7 +3,7 @@
 // that are probably part of the standard library,
 // which we can't use.
 
-use core::mem;
+use core::mem::{size_of, align_of};
 
 pub struct BinaryParser<'a>
 {
@@ -30,12 +30,12 @@ impl<'a> BinaryParser<'a>
     pub fn next<T>(self: &mut Self)->&'a T
     {
         // Apply padding
-        self.offset += align_forward(self.buf, self.offset, mem::align_of::<T>());
+        self.offset = align_forward(self.buf, self.offset, align_of::<T>());
 
         let byte_ref = &self.buf[self.offset];
         let res = unsafe { &*(byte_ref as *const u8 as *const T) };
 
-        self.offset += mem::size_of::<T>();
+        self.offset += size_of::<T>();
         return res;
     }
 }

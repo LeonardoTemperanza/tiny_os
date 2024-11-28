@@ -7,6 +7,7 @@ use x86_64::registers::segmentation::CS;
 use crate::println;
 use core::fmt;
 use lazy_static::lazy_static;
+use core::arch::asm;
 
 use pic8259::ChainedPics;
 use spin;
@@ -49,11 +50,11 @@ lazy_static!
                 .set_stack_index(DOUBLE_FAULT_IST_IDX);
         }
 
-
         // Hardware interrupts
         idt[InterruptIdx::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIdx::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
-        idt
+        idt[InterruptIdx::Syscall.as_usize()].set_handler_fn(syscall_interrupt_handler);
+        return idt;
     };
 }
 
@@ -73,7 +74,7 @@ lazy_static!
             stack_end  // In x86 stacks grow downwards
         };
 
-        tss
+        return tss;
     };
 }
 
@@ -184,7 +185,8 @@ pub static PICS: spin::Mutex<ChainedPics> = spin::Mutex::new(unsafe { ChainedPic
 #[repr(u8)]
 pub enum InterruptIdx
 {
-    Timer = PIC_1_OFFSET,
+    Syscall   = 0x80,
+    Timer     = PIC_1_OFFSET,
     Keyboard,
 }
 
@@ -199,4 +201,37 @@ impl InterruptIdx
     {
         usize::from(self.as_u8())
     }
+}
+
+// Syscalls
+
+extern "x86-interrupt" fn syscall_interrupt_handler(stack_frame: InterruptStackFrame)
+{
+    #[repr(C)]
+    struct Registers
+    {
+        rax: u64,
+        rbx: u64,
+        rcx: u64,
+        rdx: u64,
+        rsi: u64,
+        rdi: u64
+    }
+
+    println!("Syscall handler!");
+
+    /*
+    unsafe
+    {
+        asm!(
+            "mov {}, rax",
+            "mov {}, rbx",
+            "mov {}, rcx",
+            "mov {}, rdx",
+            "mov {}, rsi",
+            "mov {}, rdi",
+            inout(reg)(&mut regs) => _,
+            );
+    }
+    */
 }
