@@ -39,6 +39,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
     let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
     memory::init_heap(&mut mapper, &mut frame_allocator).expect("Heap initialization failed.");
+    
 
     processes::launch_process_from_elf(processes::USER_PROGRAM);
 

@@ -9,14 +9,14 @@ pub struct BinaryParser<'a>
 {
     pub buf: &'a [u8],
     pub offset: usize,
-    pub use_padding: bool,
+    pub do_align: bool,
 }
 
 impl<'a> BinaryParser<'a>
 {
-    pub fn new(buf: &'a [u8], offset: usize, use_padding: bool)->Self
+    pub fn new(buf: &'a [u8], offset: usize, do_align: bool)->Self
     {
-        return BinaryParser {buf, offset, use_padding};
+        return BinaryParser {buf, offset, do_align};
     }
 
     pub fn next_str(self: &mut Self, num_chars: usize)->&'a [u8]
@@ -27,16 +27,21 @@ impl<'a> BinaryParser<'a>
     }
 
 
-    pub fn next<T>(self: &mut Self)->&'a T
+    pub fn next<T>(self: &mut Self)->T
     {
         // Apply padding
-        self.offset = align_forward(self.buf, self.offset, align_of::<T>());
-
-        let byte_ref = &self.buf[self.offset];
-        let res = unsafe { &*(byte_ref as *const u8 as *const T) };
-
-        self.offset += size_of::<T>();
-        return res;
+        if self.do_align
+        {
+            self.offset = align_forward(self.buf, self.offset, align_of::<T>());
+            let byte_ref = &self.buf[self.offset];
+            let res = unsafe { &*(byte_ref as *const u8 as *const T) };
+            self.offset += size_of::<T>();
+            return *res;
+        }
+        else
+        {
+            
+        }
     }
 }
 

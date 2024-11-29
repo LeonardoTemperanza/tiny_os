@@ -84,18 +84,6 @@ pub fn create_example_mapping(page: Page, mapper: &mut OffsetPageTable, frame_al
 ////////
 // Allocators
 
-// A FrameAllocator that always returns 'None'
-
-pub struct EmptyFrameAllocator;
-
-unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator
-{
-    fn allocate_frame(&mut self)->Option<PhysFrame>
-    {
-        return None;
-    }
-}
-
 // A FrameAllocator that returns usable frames from the bootloader's memory map.
 pub struct BootInfoFrameAllocator
 {
@@ -133,8 +121,6 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator
         return frame;
     }
 }
-
-// Dummy allocator used for global allocations
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 100 * 1024;
@@ -174,3 +160,5 @@ pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
 
     return Ok(());
 }
+
+

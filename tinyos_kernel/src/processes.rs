@@ -54,6 +54,8 @@ pub fn launch_process_from_elf(blob: &[u8])->Option<BinaryInfo>
 {
     println!("Started to parse elf binary!");
 
+    
+
     if blob.len() < size_of::<ElfHeader>()
     {
         println!("The supplied binary is not ELF.");
@@ -88,6 +90,8 @@ pub fn launch_process_from_elf(blob: &[u8])->Option<BinaryInfo>
         println!("Supported binary type used. Only executables are supported.");
         return None;
     }
+
+    println!("PHT num entries: {:?}", elf_header.pht_num_entries);
 
     // Load all of them into the desired addresses
     for i in 0..elf_header.pht_num_entries
