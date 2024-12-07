@@ -40,7 +40,7 @@ impl<'a> BinaryParser<'a>
         }
         else
         {
-            
+            panic!("TODO")
         }
     }
 }
