@@ -3,7 +3,7 @@
 members = [
     "tinyos_kernel",
     "tinyos_userlib",
-    "user_programs"
+    #"user_programs"
 ]
 
 resolver = "2"
