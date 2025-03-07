@@ -7,9 +7,11 @@
 
 extern crate alloc;
 
+use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
 use tinyos::println;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
+use tinyos::process;
 
 entry_point!(kernel_main);
 
@@ -21,40 +23,45 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
 
     tinyos::init();
 
-    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let phys_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    let mut kernel_page_table = unsafe { memory::init_kernel_page_table(phys_offset) };
+    let kernel_page_table_phys_addr = unsafe { memory::active_level_4_table_addr() };
     let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
+    allocator::init_heap(&mut kernel_page_table, &mut frame_allocator).expect("Heap initialization failed.");
+
+    // Terminal stuff here
+
+    // allocate a number on the heap
+    let heap_value = Box::new(41);
+    println!("heap_value at {:p}", heap_value);
+
+    // create a dynamically sized vector
+    let mut vec = Vec::new();
+    for i in 0..500 {
+        vec.push(i);
+    }
+    println!("vec at {:p}", vec.as_slice());
+
+    // create a reference counted vector -> will be freed when count reaches 0
+    let reference_counted = Rc::new(vec![1, 2, 3]);
+    let cloned_reference = reference_counted.clone();
+    println!(
+        "current reference count is {}",
+        Rc::strong_count(&cloned_reference)
+    );
+    core::mem::drop(reference_counted);
+    println!(
+        "reference count is {} now",
+        Rc::strong_count(&cloned_reference)
+    );
 
     println!("Initialization done!");
 
-    println!("End of main 1!");
-    println!("End of main 2!");
-    println!("End of main 3!");
-    println!("End of main 4!");
-    println!("End of main 5!");
-    println!("End of main 6!");
-    println!("End of main 7!");
-    println!("End of main 8!");
-    println!("End of main 9!");
-    println!("End of main 10!");
-    println!("End of main 11!");
-    println!("End of main 12!");
-    println!("End of main 13!");
-    println!("End of main 14!");
-    println!("End of main 15!");
-    println!("End of main 16!");
-    println!("End of main 17!");
-    println!("End of main 18!");
-    println!("End of main 19!");
-    println!("End of main 20!");
-    println!("End of main 21!");
-    println!("End of main 22!");
-    println!("End of main 23!");
-    println!("End of main 24!");
-    println!("End of main 25!");
-    println!("end.");
+    // Test execution of userspace code
+    let task = process::create_task(process::USER_PROGRAM, &mut kernel_page_table, phys_offset, &mut frame_allocator, kernel_page_table_phys_addr);
+
+    println!("End of main!");
     tinyos::hlt_loop();
 }
 

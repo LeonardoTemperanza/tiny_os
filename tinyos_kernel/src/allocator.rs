@@ -1,7 +1,7 @@
 
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
-use linked_list_allocator::LockedHeap;
+use buddy_system_allocator::LockedHeap;
 use x86_64::{
     structures::paging::{
         mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
@@ -9,11 +9,13 @@ use x86_64::{
     VirtAddr,
 };
 
-pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
+pub const KERNEL_HEAP_START: usize = 0x_4444_4444_0000;
+pub const KERNEL_HEAP_SIZE:  usize = 100 * 1024; // 100 KiB
+pub const USER_HEAP_START:   usize = 0x_0000_0000_1000;
+pub const USER_HEAP_SIZE:    usize = 1 * 1024 * 1024 * 1024;  // 1 GB
 
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap::empty();
+static ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
 
 pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
                  frame_allocator: &mut impl FrameAllocator<Size4KiB>)
@@ -21,8 +23,8 @@ pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
 {
     let page_range =
     {
-        let heap_start = VirtAddr::new(HEAP_START as u64);
-        let heap_end = heap_start + HEAP_SIZE - 1u64;
+        let heap_start = VirtAddr::new(KERNEL_HEAP_START as u64);
+        let heap_end = heap_start + KERNEL_HEAP_SIZE - 1u64;
         let heap_start_page = Page::containing_address(heap_start);
         let heap_end_page = Page::containing_address(heap_end);
         Page::range_inclusive(heap_start_page, heap_end_page)
@@ -38,7 +40,7 @@ pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
     }
 
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        ALLOCATOR.lock().init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
     }
 
     return Ok(());

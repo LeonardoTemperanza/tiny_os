@@ -52,6 +52,11 @@ pub fn init_idt()
     IDT.load();
 }
 
+pub unsafe fn notify_end_of_timer_interrupt()
+{
+    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8()) };
+}
+
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame)
 {
     println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);

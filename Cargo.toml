@@ -1,9 +1,7 @@
 
 [workspace]
 members = [
-    "tinyos_kernel",
-    "tinyos_userlib",
-    #"user_programs"
+    "tinyos_kernel"
 ]
 
 resolver = "2"

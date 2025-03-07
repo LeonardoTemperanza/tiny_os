@@ -1,43 +1,93 @@
 
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+use crate::println;
 use x86_64::
 {
-    structures::paging::{FrameAllocator, OffsetPageTable, PageTable, PhysFrame, Size4KiB},
+    structures::paging::{FrameAllocator, OffsetPageTable, PageTable, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
 };
 
-/// Initialize a new OffsetPageTable.
-///
-/// This function is unsafe because the caller must guarantee that the
-/// complete physical memory is mapped to virtual memory at the passed
-/// `physical_memory_offset`. Also, this function must be only called once
-/// to avoid aliasing `&mut` references (which is undefined behavior).
-pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static>
+pub unsafe fn init_kernel_page_table(phys_offset: VirtAddr) -> OffsetPageTable<'static>
 {
     unsafe
     {
-        let level_4_table = active_level_4_table(physical_memory_offset);
-        return OffsetPageTable::new(level_4_table, physical_memory_offset);
+        let level_4_table = active_level_4_table(phys_offset);
+        return OffsetPageTable::new(level_4_table, phys_offset);
     }
 }
 
-/// Returns a mutable reference to the active level 4 table.
-///
-/// This function is unsafe because the caller must guarantee that the
-/// complete physical memory is mapped to virtual memory at the passed
-/// `physical_memory_offset`. Also, this function must be only called once
-/// to avoid aliasing `&mut` references (which is undefined behavior).
-unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable
+pub unsafe fn active_level_4_table(phys_offset: VirtAddr) -> &'static mut PageTable
 {
     use x86_64::registers::control::Cr3;
 
     let (level_4_table_frame, _) = Cr3::read();
 
     let phys = level_4_table_frame.start_address();
-    let virt = physical_memory_offset + phys.as_u64();
+    let virt = phys_offset + phys.as_u64();
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
 
     return unsafe { &mut *page_table_ptr };
+}
+
+pub unsafe fn active_level_4_table_addr() -> PhysAddr
+{
+    use x86_64::registers::control::Cr3;
+
+    let (level_4_table_frame, _) = Cr3::read();
+
+    let phys = level_4_table_frame.start_address();
+    return phys;
+}
+
+pub unsafe fn clone_page_table(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr) -> Option<PhysAddr>
+{
+    return unsafe { clone_page_table_rec(phys_addr, frame_allocator, phys_offset, 4) };
+}
+
+unsafe fn clone_page_table_rec(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr, level: u8) -> Option<PhysAddr>
+{
+    if level <= 0 || level > 4 { panic!("Invalid level"); }
+
+    let table_virt_addr = phys_offset + phys_addr.as_u64();
+    let original_table = unsafe { &*table_virt_addr.as_ptr::<PageTable>() };
+
+    let new_table_frame = frame_allocator.allocate_frame().expect("Phys frame allocation failed");
+    let new_table_phys_addr = new_table_frame.start_address();
+    let new_table_virt_addr = phys_offset + new_table_phys_addr.as_u64();
+
+    let new_table = unsafe { &mut *new_table_virt_addr.as_mut_ptr::<PageTable>() };
+    new_table.zero();
+
+    for (i, entry) in original_table.iter().enumerate()
+    {
+        if entry.is_unused() { continue; }
+        if !entry.flags().contains(PageTableFlags::PRESENT) { continue; }
+
+        let entry_phys_addr = entry.addr();
+
+        if entry.flags().contains(PageTableFlags::HUGE_PAGE) || level == 1
+        {
+            new_table[i] = entry.clone();
+        }
+        else
+        {
+            let res = unsafe { clone_page_table_rec(entry_phys_addr, frame_allocator, phys_offset, level - 1) };
+            if let Some(new_subtable_phys) = res
+            {
+                new_table[i].set_addr(new_subtable_phys, entry.flags());
+            }
+        }
+    }
+
+    return Some(new_table_phys_addr);
+}
+
+pub unsafe fn activate_page_table(page_table_phys: PhysAddr)
+{
+    use x86_64::registers::control::{Cr3, Cr3Flags};
+    let frame = PhysFrame::from_start_address(page_table_phys).unwrap();
+    unsafe { Cr3::write(frame, Cr3Flags::PAGE_LEVEL_CACHE_DISABLE) };
+
 }
 
 pub struct EmptyFrameAllocator;
@@ -49,6 +99,15 @@ unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator
         return None;
     }
 }
+
+/*
+pub unsafe fn enable_page_table(table: PageTable)
+{
+    unsafe {
+        let phys_addr = table.;
+    }
+}
+*/
 
 pub struct BootInfoFrameAllocator
 {
@@ -86,6 +145,6 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator
     {
         let frame = self.usable_frames().nth(self.next);
         self.next += 1;
-        frame
+        return frame;
     }
 }
