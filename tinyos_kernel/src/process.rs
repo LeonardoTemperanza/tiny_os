@@ -12,6 +12,7 @@ use core::{pin::Pin};
 use alloc::{boxed::Box, vec::Vec};
 use crate::allocator;
 use lazy_static::lazy_static;
+use spin::Mutex;
 
 use buddy_system_allocator as heap;
 
@@ -88,10 +89,7 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_mem_off
         return None;
     }
 
-    let pt = unsafe { memory::clone_page_table(kernel_pagetable_phys_addr, frame_allocator, phys_mem_offset).unwrap() };
-    unsafe { memory::activate_page_table(pt) };
-
-    println!("Activated page table!");
+    let pt = unsafe { memory::shallow_clone_page_table(kernel_pagetable_phys_addr, frame_allocator, phys_mem_offset) };
 
     //let mut free_interval_begin = allocator::USER_HEAP_START;
     for i in 0..elf_header.pht_num_entries
@@ -159,16 +157,9 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_mem_off
         started: false,
         ctx: Default::default(),
         start_instr: VirtAddr::new(elf_header.entry_vaddr),
-        stack_ptr: VirtAddr::new(USER_STACK_START),
-        //page_table: ,
+        stack_end: VirtAddr::new(USER_STACK_START + 4096),
+        page_table: pt,
     });
-
-    //unsafe { jump_to_entry_point(elf_header.entry_vaddr) };
-}
-
-pub fn jump_to_usercode(code: VirtAddr, stack_end: VirtAddr)
-{
-    //let (cs_idx, ds_idx) = gdt::set_usermode
 }
 
 pub fn elf_flags_to_page_table_flags(flags: u32) -> PageTableFlags
@@ -240,37 +231,73 @@ pub struct Task
     ctx: Context,
 
     start_instr: VirtAddr,
-    stack_ptr:   VirtAddr,
-    //page_table: PageTable,
-
-    // Need some more info for destruction of task
+    stack_end:   VirtAddr,
+    page_table:  PhysAddr,
 }
 
 impl Drop for Task
 {
-    fn drop(self: &mut Self) {}
+    fn drop(self: &mut Self) {}  // TODO
 }
 
+#[derive(Default)]
 pub struct Scheduler
 {
-    //tasks: Vec<Task>,
-    //cur_task: usize,
+    tasks: Mutex<Vec<Task>>,
+    cur_task: Mutex<usize>,
 }
 
 lazy_static! {
-    pub static ref SCHEDULER: Scheduler = Scheduler::new();
+    pub static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
 }
 
 impl Scheduler
 {
     pub fn new() -> Self
     {
-        return Scheduler {};
+        return Scheduler::default();
     }
 
-    pub unsafe fn schedule_data(&self, prog_data: Vec<u8>, entry_offset: usize)
+    pub fn schedule_task(&mut self, task: Task)
     {
+        self.tasks.lock().push(task);
+    }
 
+    pub unsafe fn save_current_context(&self, ctx: *const Context)
+    {
+/*        self.tasks.lock().map(|idx| {
+            let ctx = (*ctx).clone();
+            //self.tasks.lock()[idx].
+        })*/
+    }
+
+    pub unsafe fn run_next_task(self: &mut Self)
+    {
+        let tasks_len = self.tasks.lock().len();
+        if tasks_len <= 0 { crate::hlt_loop(); }  // No more tasks to run
+
+        let (started, ctx, start_instr, stack_end, page_table) = {
+            let mut cur_task = self.cur_task.lock();
+            let next_task = (*cur_task + 1) % tasks_len;
+            *cur_task = next_task;
+            let task = &self.tasks.lock()[next_task];
+
+            (
+                task.started,
+                task.ctx.clone(),
+                task.start_instr.clone(),
+                task.stack_end.clone(),
+                task.page_table.clone()
+            )
+        };
+
+        unsafe { memory::activate_page_table(page_table) };
+
+        if !started {
+            unsafe { init_and_jump_to_usercode(start_instr, stack_end) };
+        } else {
+            unsafe { restore_context_and_return_from_interrupt(&ctx) };
+        }
     }
 }
 
@@ -323,11 +350,31 @@ pub unsafe fn restore_context_and_return_from_interrupt(ctx: &Context)
     }
 }
 
+#[inline(never)]
+pub unsafe fn init_and_jump_to_usercode(code: VirtAddr, stack_end: VirtAddr)
+{
+    unsafe
+    {
+        let (cs_idx, ds_idx) = crate::gdt::set_usermode_segs();
+        x86_64::instructions::tlb::flush_all();
+        asm!("\
+        push rax    // stack segment
+        push rsi    // rsp
+        push 0x200  // rflags (only interrupt bit set)
+        push rdx    // Code segment
+        push rdi    // ret to virtual addr
+        iretq",
+        in("rdi") code.as_u64(), in("rsi") stack_end.as_u64(), in("dx") cs_idx, in("ax") ds_idx);
+    }
+}
+
 pub unsafe extern "sysv64" fn context_switch(ctx: *const Context)
 {
-    //SCHEDULER.save_current_context(ctx);
-    //interrupts::notify_end_of_timer_interrupt();
-    //SCHEDULER.run_next();
+    unsafe {
+        SCHEDULER.lock().save_current_context(ctx);
+        interrupts::notify_end_of_timer_interrupt();
+        SCHEDULER.lock().run_next_task();
+    }
 }
 
 // Debugging utils

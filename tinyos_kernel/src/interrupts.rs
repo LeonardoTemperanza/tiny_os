@@ -3,7 +3,8 @@ use crate::{gdt, hlt_loop, print, println};
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode, HandlerFunc};
+use core::arch::naked_asm;
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
@@ -41,7 +42,19 @@ lazy_static!
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
-        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
+
+
+        unsafe {
+            idt[InterruptIndex::Timer.as_usize()].set_handler_fn(
+                core::mem::transmute::<
+                    extern "sysv64" fn(),
+                    extern "x86-interrupt" fn(InterruptStackFrame)
+                >(timer_interrupt_context_switch_handler)
+            );
+        }
+
+
+        //idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt
     };
@@ -81,11 +94,23 @@ extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame,
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame)
 {
-    //print!(".");
+    print!(".");
+    unsafe { notify_end_of_timer_interrupt() };
+}
+
+#[naked]
+extern "sysv64" fn timer_interrupt_context_switch_handler()
+{
     unsafe
     {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        naked_asm!("\
+        // Save the current context
+        push r15; push r14; push r13; push r12; push r11; push r10; push r9;\
+        push r8; push rdi; push rsi; push rdx; push rcx; push rbx; push rax; push rbp;\
+        mov rdi, rsp          // Pass the context ptr as first argument (stack array)
+        sub rsp, 0x400        // Allocate some stack space
+        jmp {context_switch}
+        ", context_switch = sym crate::process::context_switch);
     }
 }
 

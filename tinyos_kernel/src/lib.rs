@@ -1,6 +1,7 @@
 
 #![no_std]
 #![feature(abi_x86_interrupt)]
+#![feature(naked_functions)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]

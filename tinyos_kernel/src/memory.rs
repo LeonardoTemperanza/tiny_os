@@ -82,12 +82,34 @@ unsafe fn clone_page_table_rec(phys_addr: PhysAddr, frame_allocator: &mut impl F
     return Some(new_table_phys_addr);
 }
 
+pub unsafe fn shallow_clone_page_table(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr) -> PhysAddr
+{
+    let table_virt_addr = phys_offset + phys_addr.as_u64();
+    let original_table = unsafe { &*table_virt_addr.as_ptr::<PageTable>() };
+
+    let new_table_frame = frame_allocator.allocate_frame().expect("Phys frame allocation failed");
+    let new_table_phys_addr = new_table_frame.start_address();
+    let new_table_virt_addr = phys_offset + new_table_phys_addr.as_u64();
+
+    let new_table = unsafe { &mut *new_table_virt_addr.as_mut_ptr::<PageTable>() };
+    new_table.zero();
+
+    for (i, entry) in original_table.iter().enumerate()
+    {
+        if entry.is_unused() { continue; }
+        if !entry.flags().contains(PageTableFlags::PRESENT) { continue; }
+
+        new_table[i] = entry.clone();
+    }
+
+    return new_table_phys_addr;
+}
+
 pub unsafe fn activate_page_table(page_table_phys: PhysAddr)
 {
     use x86_64::registers::control::{Cr3, Cr3Flags};
     let frame = PhysFrame::from_start_address(page_table_phys).unwrap();
     unsafe { Cr3::write(frame, Cr3Flags::PAGE_LEVEL_CACHE_DISABLE) };
-
 }
 
 pub struct EmptyFrameAllocator;
