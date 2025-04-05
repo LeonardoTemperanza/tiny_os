@@ -31,12 +31,19 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
     allocator::init_heap(&mut kernel_page_table, &mut frame_allocator).expect("Heap initialization failed.");
 
     let task = process::create_task(process::USER_PROGRAM, &mut kernel_page_table, phys_offset, &mut frame_allocator, kernel_page_table_phys_addr);
-    process::SCHEDULER.lock().schedule_task(task.unwrap());
+    println!("Created task.");
+
+    process::SCHEDULER.schedule_task(task.unwrap());
+    println!("Scheduled task.");
+
+    //println!("About to run next task.");
     //unsafe { process::SCHEDULER.lock().run_next_task() };
 
-    println!("End of main");
+    x86_64::instructions::interrupts::enable();
+
+    // We will be interrupted soon
+    println!("End of main.");
     tinyos::hlt_loop();
-    //panic!("Reached end of main!");
 }
 
 #[panic_handler]

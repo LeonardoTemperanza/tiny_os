@@ -2,6 +2,9 @@
 #![no_std]
 #![feature(abi_x86_interrupt)]
 #![feature(naked_functions)]
+#![feature(str_from_raw_parts)]
+#![allow(unsafe_op_in_unsafe_fn)]
+
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
@@ -17,13 +20,14 @@ pub mod serial;
 pub mod vga_buffer;
 pub mod process;
 pub mod base;
+pub mod syscalls;
 
 pub fn init()
 {
     gdt::init();
     interrupts::init_idt();
+    unsafe { syscalls::init_syscalls() };
     unsafe { interrupts::PICS.lock().initialize() };
-    x86_64::instructions::interrupts::enable();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

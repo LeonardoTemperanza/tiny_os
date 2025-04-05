@@ -92,12 +92,6 @@ extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame,
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame)
-{
-    print!(".");
-    unsafe { notify_end_of_timer_interrupt() };
-}
-
 #[naked]
 extern "sysv64" fn timer_interrupt_context_switch_handler()
 {
