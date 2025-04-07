@@ -1,4 +1,5 @@
 
+use crate::{print, println};
 use core::arch::{asm, naked_asm};
 use alloc::vec::Vec;
 use alloc::format;
@@ -97,7 +98,8 @@ unsafe extern "sysv64" fn syscall_alloc_stack(arg0: u64, arg1: u64, arg2: u64, a
 }
 
 #[inline(never)]
-extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64, temp_stack: *const u8) -> u64 {
+extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64, temp_stack: *const u8) -> u64
+{
     let old_stack: *const u8;
     unsafe {
         asm!("\
@@ -106,12 +108,17 @@ extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u6
         sti // enable interrupts",
         temp_stack = in(reg) temp_stack, old_stack = out(reg) old_stack);
     }
-    let retval: u64 = match syscall {
+
+    println!("Syscall!");
+
+    let retval: u64 = match syscall
+    {
         0x1337 => sys_print(arg0, arg1, arg2, arg3),
         //0x1338 => sys_getline(arg0, arg1),
         //0x8EAD => sys_read(arg0, arg1, arg2),
         _ => syscall_unhandled(),
     };
+
     unsafe {
         asm!("\
         cli // disable interrupts while restoring the stack

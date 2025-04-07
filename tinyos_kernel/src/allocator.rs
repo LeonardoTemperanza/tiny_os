@@ -11,8 +11,6 @@ use x86_64::{
 
 pub const KERNEL_HEAP_START: usize = 0x_4444_4444_0000;
 pub const KERNEL_HEAP_SIZE:  usize = 100 * 1024; // 100 KiB
-pub const USER_HEAP_START:   usize = 0x_0000_0000_1000;
-pub const USER_HEAP_SIZE:    usize = 1 * 1024 * 1024 * 1024;  // 1 GB
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap<32> = LockedHeap::empty();

@@ -36,13 +36,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
     process::SCHEDULER.schedule_task(task.unwrap());
     println!("Scheduled task.");
 
-    //println!("About to run next task.");
-    //unsafe { process::SCHEDULER.lock().run_next_task() };
-
-    x86_64::instructions::interrupts::enable();
-
     // We will be interrupted soon
     println!("End of main.");
+    x86_64::instructions::interrupts::enable();
     tinyos::hlt_loop();
 }
 

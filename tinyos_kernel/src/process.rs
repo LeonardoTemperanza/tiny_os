@@ -86,20 +86,21 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
 
     if elf_header.bin_type != 2
     {
-        println!("Supported binary type used. Only executables are supported.");
+        println!("Unsupported binary type used. Only executables are supported.");
         return None;
     }
 
-    let pt = unsafe { memory::shallow_clone_page_table(kernel_pagetable_phys_addr, frame_allocator, phys_offset) };
+    let pt = unsafe { memory::clone_page_table(kernel_pagetable_phys_addr, frame_allocator, phys_offset).unwrap() };
     let pt_virt = phys_offset + pt.as_u64();
     let pt_ptr: *mut PageTable = pt_virt.as_mut_ptr();
     let mut process_mapper = unsafe { OffsetPageTable::new(&mut *pt_ptr, phys_offset) };
 
     for i in 0..elf_header.pht_num_entries
     {
+        println!("Iteration");
         let ph_offset = elf_header.pht_offset + (i as u64) * (elf_header.pht_entry_size as u64);
         let program_header = parse_elf_program_header(&blob[ph_offset as usize..]);
-        //print_elf_program_header(program_header);
+        print_elf_program_header(program_header);
         if program_header.segment_type == 1  // PT_LOAD segment
         {
             use x86_64::structures::paging::Page;
@@ -112,27 +113,47 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
             assert!(size_file <= size_mem);
 
             // Map pages
-            for (i, page) in page_range.enumerate()
-            {
+            for (i, page) in page_range.enumerate() {
+                let page_vaddr = page.start_address().as_u64();
+
+                let offset_in_segment = page_vaddr.saturating_sub(vaddr);
+
                 let flags = elf_flags_to_page_table_flags(program_header.flags);
+                print_page_flags(flags);
                 let frame = frame_allocator.allocate_frame().unwrap();
                 if frame.size() != 4096 { panic!("Assuming physical frame size is 4KB"); }
+
                 unsafe {
-                    let res = process_mapper.map_to(page, frame, flags, frame_allocator).unwrap().flush();
+                    println!("About to map page {} to {}", page.start_address().as_u64(), frame.start_address().as_u64());
+                    process_mapper.map_to(page, frame, flags, frame_allocator).unwrap().flush();
                 }
 
-                // Copy the data over. Using the offset mapping because the mapping
-                // that was just created might not have WRITABLE flag active!
                 let dst = (phys_offset + frame.start_address().as_u64()).as_mut_ptr() as *mut u8;
-                let src = (&blob[(program_header.offset as u64 + 4096 * i as u64) as usize]) as *const u8;
 
-                let mut bytes_to_copy: usize = (i+1) * frame.size() as usize;
-                if size_file < bytes_to_copy as u64 {
-                    bytes_to_copy = size_file as usize;
+                // Zero the entire page
+                unsafe { core::ptr::write_bytes(dst, 0, frame.size() as usize) };
+
+                if offset_in_segment < size_file {
+                    let bytes_to_copy = core::cmp::min(
+                        size_file - offset_in_segment,
+                        frame.size() as u64
+                    ) as usize;
+
+                    let file_offset = program_header.offset + offset_in_segment;
+
+                    if (file_offset as usize) < blob.len() {
+                        let safe_bytes = core::cmp::min(
+                            bytes_to_copy,
+                            blob.len() - file_offset as usize
+                        );
+
+                        let src = &blob[file_offset as usize] as *const u8;
+
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(src, dst, safe_bytes);
+                        }
+                    }
                 }
-                bytes_to_copy -= i * frame.size() as usize;
-
-                unsafe { core::ptr::copy(src, dst, bytes_to_copy) };
             }
         }
         else if program_header.segment_type == 2  // PT_DYNAMIC segment
@@ -152,6 +173,7 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
     let stack_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
     unsafe {
         process_mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
+        //mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
     }
 
     return Some(Task {
@@ -166,8 +188,8 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
 pub fn elf_flags_to_page_table_flags(flags: u32) -> PageTableFlags
 {
     let mut res = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
-    if flags & 1 == 0 { res &= PageTableFlags::NO_EXECUTE }
-    if flags & 2 != 0 { res &= PageTableFlags::WRITABLE   }
+    if flags & 1 == 0 { res |= PageTableFlags::NO_EXECUTE }
+    if flags & 2 != 0 { res |= PageTableFlags::WRITABLE   }
     if flags & 4 != 0 { }
     return res;
 }
@@ -377,11 +399,8 @@ pub unsafe fn init_and_jump_to_usercode(code: VirtAddr, stack_end: VirtAddr)
 pub unsafe extern "sysv64" fn context_switch(ctx: *const Context)
 {
     unsafe {
-        crate::println!("Context switching!");
         SCHEDULER.save_current_context(ctx);
-        crate::println!("Current context saved");
         interrupts::notify_end_of_timer_interrupt();
-        crate::println!("Run next task");
         SCHEDULER.run_next_task();
     }
 }
@@ -409,4 +428,39 @@ pub fn print_elf_program_header(header: ProgramHeader)
         header.vaddr, header.paddr,
         header.size_in_file, header.size_in_memory,
     );
+}
+
+pub fn print_page_flags(flags: PageTableFlags)
+{
+    print!("Page flags: ");
+
+    if flags.contains(PageTableFlags::PRESENT) {
+        print!("PRESENT ");
+    }
+    if flags.contains(PageTableFlags::WRITABLE) {
+        print!("WRITABLE ");
+    }
+    if flags.contains(PageTableFlags::USER_ACCESSIBLE) {
+        print!("USER_ACCESSIBLE ");
+    }
+    if flags.contains(PageTableFlags::WRITE_THROUGH) {
+        print!("WRITE_THROUGH ");
+    }
+    if flags.contains(PageTableFlags::NO_CACHE) {
+        print!("NO_CACHE ");
+    }
+    if flags.contains(PageTableFlags::ACCESSED) {
+        print!("ACCESSED ");
+    }
+    if flags.contains(PageTableFlags::DIRTY) {
+        print!("DIRTY ");
+    }
+    if flags.contains(PageTableFlags::HUGE_PAGE) {
+        print!("HUGE_PAGE ");
+    }
+    if flags.contains(PageTableFlags::GLOBAL) {
+        print!("GLOBAL ");
+    }
+
+    println!("");
 }
