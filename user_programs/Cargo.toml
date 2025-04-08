@@ -1,0 +1,10 @@
+[package]
+name = "tiny_os_user_programs_"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "shell"
+path = "src/shell.rs"
+
+[dependencies]

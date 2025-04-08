@@ -1,0 +1,10 @@
+
+[build]
+target = "tinyos_x64_user_target.json"
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.'cfg(target_os = "none")']
+runner = "bootimage runner"
