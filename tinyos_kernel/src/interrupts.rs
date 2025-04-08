@@ -1,10 +1,12 @@
 
-use crate::{gdt, hlt_loop, print, println};
+use crate::{gdt, hlt_loop, print, println, process, interrupts};
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode, HandlerFunc};
-use core::arch::naked_asm;
+use x86_64::PrivilegeLevel;
+use core::arch::{naked_asm, asm};
+use alloc::{vec::Vec};
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
@@ -15,6 +17,7 @@ pub enum InterruptIndex
 {
     Timer = PIC_1_OFFSET,
     Keyboard,
+    Syscall = 0x80,
 }
 
 impl InterruptIndex
@@ -51,8 +54,14 @@ lazy_static!
                     extern "x86-interrupt" fn(InterruptStackFrame)
                 >(timer_interrupt_context_switch_handler)
             );
-        }
 
+            idt[InterruptIndex::Syscall.as_usize()].set_handler_fn(
+                core::mem::transmute::<
+                    extern "sysv64" fn(),
+                    extern "x86-interrupt" fn(InterruptStackFrame)
+                >(syscall_interrupt_handler)
+            ).set_privilege_level(PrivilegeLevel::Ring3);
+        }
 
         //idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
@@ -104,8 +113,66 @@ extern "sysv64" fn timer_interrupt_context_switch_handler()
         mov rdi, rsp          // Pass the context ptr as first argument (stack array)
         sub rsp, 0x400        // Allocate some stack space
         jmp {context_switch}
-        ", context_switch = sym crate::process::context_switch);
+        ", context_switch = sym context_switch);
     }
+}
+
+pub unsafe extern "sysv64" fn context_switch(ctx: *const process::Context)
+{
+    unsafe {
+        process::SCHEDULER.save_current_context(ctx);
+        interrupts::notify_end_of_timer_interrupt();
+        process::SCHEDULER.run_next_task();
+    }
+}
+
+#[naked]
+extern "sysv64" fn syscall_interrupt_handler()
+{
+    unsafe {
+        naked_asm!("\
+        push rcx        // backup registers for sysretq
+        push r11
+        push rbp        // save callee-saved registers
+        push rbx
+        push r12
+        push r13
+        push r14
+        push r15
+        mov rbp, rsp    // save rsp
+        sub rsp, 0x400  // make some room in the stack
+        mov rcx, r10    // move fourth syscall arg to rcx which is the fourth argument register in sysv64
+        mov r8, rax     // move syscall number to the 5th argument register
+        call {syscall_alloc_stack} // call the handler with the syscall number in r8
+        mov rsp, rbp    // restore rsp from rbp
+        pop r15         // restore callee-saved registers
+        pop r14
+        pop r13
+        pop r12
+        pop rbx
+        pop rbp         // restore stack and registers for sysretq
+        pop r11
+        pop rcx
+        iretq           // use the specialized instruction to return from the interrupt (to user mode)",
+        syscall_alloc_stack = sym syscall_alloc_stack);
+    }
+}
+
+unsafe extern "sysv64" fn syscall_alloc_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64) -> u64
+{
+    //println!("syscall: {}, {}, {}, {}, {}", arg0, arg1, arg2, arg3, syscall);
+
+    let syscall_stack: Vec<u8> = Vec::with_capacity(0x10000);
+    let stack_ptr = syscall_stack.as_ptr();
+    let retval = handle_syscall_with_temp_stack(arg0, arg1, arg2, arg3, syscall, stack_ptr);
+    drop(syscall_stack);
+
+    unsafe
+    {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
+    }
+    return retval;
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame)
@@ -144,4 +211,97 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
+}
+
+// Syscalls
+
+// NOTE: This should be kept up to date along with its
+// counterpart in the usercode library.
+pub enum Syscall
+{
+    Print = 1,
+    PrintNum = 2,
+    Exit = 3,
+}
+
+#[inline(never)]
+extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64, temp_stack: *const u8) -> u64
+{
+/*    let old_stack: *const u8;
+    unsafe {
+        asm!("\
+        cli
+        mov {old_stack}, rsp
+        mov rsp, {temp_stack} // move our stack to the newly allocated one
+        //sti // enable interrupts",
+        temp_stack = in(reg) temp_stack, old_stack = out(reg) old_stack);
+    }
+
+*/
+
+    let retval: u64 = match syscall
+    {
+        x if x == Syscall::Print as u64 => sys_print(arg0, arg1),
+        x if x == Syscall::PrintNum as u64 => sys_print_num(arg0),
+        x if x == Syscall::Exit as u64  => sys_exit(arg0),
+        //0x1338 => sys_getline(arg0, arg1),
+        //0x8EAD => sys_read(arg0, arg1, arg2),
+        _ => syscall_unhandled(),
+    };
+
+/*
+    unsafe {
+        asm!("\
+        //cli // disable interrupts while restoring the stack
+        mov rsp, {old_stack} // restore the old stack
+        sti
+        ",
+        old_stack = in(reg) old_stack);
+    }
+*/
+
+    unsafe
+    {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
+    }
+
+    return retval;
+}
+
+fn sys_print(str_ptr: u64, str_len: u64) -> u64
+{
+    // TODO: Check that str_ptr is a usermode address!
+
+    unsafe {
+        let string = core::slice::from_raw_parts(str_ptr as *const u8, str_len as usize);
+        let string = core::str::from_utf8_unchecked(string);
+        print!("{}", string);
+    }
+
+    return 0;
+}
+
+fn sys_print_num(val: u64) -> u64
+{
+    print!("{}", val);
+    return 0;
+}
+
+fn sys_exit(val: u64) -> u64
+{
+    process::SCHEDULER.remove_current_task();
+
+    unsafe
+    {
+        PICS.lock().notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
+        process::SCHEDULER.run_next_task();
+    }
+
+    return val;
+}
+
+fn syscall_unhandled() -> u64
+{
+    panic!("Unhandled syscall!");
 }

@@ -20,13 +20,11 @@ pub mod serial;
 pub mod vga_buffer;
 pub mod process;
 pub mod base;
-pub mod syscalls;
 
 pub fn init()
 {
     gdt::init();
     interrupts::init_idt();
-    unsafe { syscalls::init_syscalls() };
     unsafe { interrupts::PICS.lock().initialize() };
 }
 

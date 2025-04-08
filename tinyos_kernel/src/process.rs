@@ -62,12 +62,11 @@ use x86_64::
 };
 
 pub const USER_STACK_START: u64 = 0x800000;
+pub const USER_STACK_NUM_PAGES: u64 = 50;
 
 pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset: VirtAddr,
                    frame_allocator: &mut impl FrameAllocator<Size4KiB>, kernel_pagetable_phys_addr: PhysAddr) -> Option<Task>
 {
-    println!("Started to parse elf binary!");
-
     let elf_header = parse_elf_binary(blob);
     if elf_header.is_none() { return None; }
     let elf_header = elf_header.unwrap();
@@ -97,10 +96,9 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
 
     for i in 0..elf_header.pht_num_entries
     {
-        println!("Iteration");
         let ph_offset = elf_header.pht_offset + (i as u64) * (elf_header.pht_entry_size as u64);
         let program_header = parse_elf_program_header(&blob[ph_offset as usize..]);
-        print_elf_program_header(program_header);
+        //print_elf_program_header(program_header);
         if program_header.segment_type == 1  // PT_LOAD segment
         {
             use x86_64::structures::paging::Page;
@@ -119,12 +117,11 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
                 let offset_in_segment = page_vaddr.saturating_sub(vaddr);
 
                 let flags = elf_flags_to_page_table_flags(program_header.flags);
-                print_page_flags(flags);
+                //print_page_flags(flags);
                 let frame = frame_allocator.allocate_frame().unwrap();
                 if frame.size() != 4096 { panic!("Assuming physical frame size is 4KB"); }
 
                 unsafe {
-                    println!("About to map page {} to {}", page.start_address().as_u64(), frame.start_address().as_u64());
                     process_mapper.map_to(page, frame, flags, frame_allocator).unwrap().flush();
                 }
 
@@ -168,19 +165,22 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
     }
 
     // Reserve memory for stack space
-    let stack_phys_frame = frame_allocator.allocate_frame().unwrap();
-    let stack_virt_page = Page::containing_address(VirtAddr::new(USER_STACK_START));
-    let stack_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
-    unsafe {
-        process_mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
-        //mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
+    for i in 0..USER_STACK_NUM_PAGES
+    {
+        let stack_phys_frame = frame_allocator.allocate_frame().unwrap();
+        let stack_virt_page = Page::containing_address(VirtAddr::new(USER_STACK_START + i * 4096));
+        let stack_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
+        unsafe {
+            process_mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
+            //mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
+        }
     }
 
     return Some(Task {
         started: false,
         ctx: Default::default(),
         start_instr: VirtAddr::new(elf_header.entry_vaddr),
-        stack_end: VirtAddr::new(USER_STACK_START + 4096),
+        stack_end: VirtAddr::new(USER_STACK_START + USER_STACK_NUM_PAGES * 4096 - 1),
         page_table: pt,
     });
 }
@@ -267,7 +267,7 @@ impl Drop for Task
 pub struct Scheduler
 {
     tasks: Mutex<Vec<Task>>,
-    cur_task: Mutex<usize>,
+    cur_task: Mutex<Option<usize>>,
 }
 
 lazy_static! {
@@ -286,16 +286,53 @@ impl Scheduler
         self.tasks.lock().push(task);
     }
 
+    pub fn remove_current_task(&self)
+    {
+        let mut tasks = self.tasks.lock();
+        let mut cur_task_opt = self.cur_task.lock();
+
+        if let Some(cur_task) = *cur_task_opt
+        {
+            if cur_task < tasks.len()
+            {
+                tasks.remove(cur_task);
+
+                if tasks.is_empty()
+                {
+                    *cur_task_opt = None;
+                }
+                else
+                {
+                    // Adjust the current task index to be
+                    // the removed task's previous index.
+                    let new_index = if cur_task == 0 {
+                        tasks.len() - 1
+                    } else {
+                        cur_task - 1
+                    };
+                    *cur_task_opt = Some(new_index);
+                }
+            }
+        }
+    }
+
     pub unsafe fn save_current_context(&self, ctx: *const Context)
     {
         let ctx_ref = unsafe { &*ctx };
 
+        // NOTE: This is fine for now, but make
+        // sure not to lock cur_task first in some other thread.
+        // A unique lock for these resources would probably be better
         let mut tasks = self.tasks.lock();
         let cur_task = *self.cur_task.lock();
 
-        if let Some(task) = tasks.get_mut(cur_task) {
-            task.started = true;
-            task.ctx = ctx_ref.clone(); // Assuming Context implements Clone
+        if let Some(cur_task) = cur_task
+        {
+            if let Some(task) = tasks.get_mut(cur_task)
+            {
+                task.started = true;
+                task.ctx = ctx_ref.clone();
+            }
         }
     }
 
@@ -305,7 +342,8 @@ impl Scheduler
         if tasks_len <= 0 { println!("No more tasks to run!"); crate::hlt_loop(); }
 
         let (started, ctx, start_instr, stack_end, page_table) = {
-            let mut cur_task = self.cur_task.lock();
+            let mut cur_task_opt = self.cur_task.lock();
+            let cur_task = cur_task_opt.get_or_insert(0);
             let next_task = (*cur_task + 1) % tasks_len;
             *cur_task = next_task;
             let task = &self.tasks.lock()[next_task];
@@ -319,9 +357,11 @@ impl Scheduler
             )
         };
 
+        //println!("About to activate_page_table");
         unsafe { memory::activate_page_table(page_table) };
 
         if !started {
+            println!("About to init and jump to usercode");
             unsafe { init_and_jump_to_usercode(start_instr, stack_end) };
         } else {
             unsafe { restore_context_and_return_from_interrupt(&ctx) };
@@ -393,15 +433,6 @@ pub unsafe fn init_and_jump_to_usercode(code: VirtAddr, stack_end: VirtAddr)
         push rdi    // ret to virtual addr
         iretq",
         in("rdi") code.as_u64(), in("rsi") stack_end.as_u64(), in("dx") cs_idx, in("ax") ds_idx);
-    }
-}
-
-pub unsafe extern "sysv64" fn context_switch(ctx: *const Context)
-{
-    unsafe {
-        SCHEDULER.save_current_context(ctx);
-        interrupts::notify_end_of_timer_interrupt();
-        SCHEDULER.run_next_task();
     }
 }
 
