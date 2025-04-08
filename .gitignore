@@ -1,1 +1,3 @@
-/target
+
+tinyos/target/**
+user_programs/target/**

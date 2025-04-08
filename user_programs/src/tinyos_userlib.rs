@@ -55,10 +55,10 @@ pub fn exit(val: u64)
 
 pub fn create_task(task_name: &str)
 {
-    syscall(Syscall::CreateTask as u64, task_name.as_ptr()
+    //syscall(Syscall::CreateTask as u64, task_name.as_ptr());
 }
 
-pub fn read_next_line() ->
+pub fn read_next_line()
 {
 
 }

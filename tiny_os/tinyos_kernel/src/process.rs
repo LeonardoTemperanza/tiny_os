@@ -1,5 +1,5 @@
 
-pub const USER_PROGRAM: &[u8] = include_bytes!("simple_test");
+pub const USER_PROGRAM: &[u8] = include_bytes!("shell");
 pub const USER_PROGRAM_NAME: &str = "simple_test";
 
 use crate::println;
