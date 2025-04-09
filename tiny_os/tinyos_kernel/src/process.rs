@@ -1,6 +1,6 @@
 
-pub const USER_PROGRAM: &[u8] = include_bytes!("shell");
-pub const USER_PROGRAM_NAME: &str = "simple_test";
+pub const USER_PROGRAM_SHELL: &[u8] = include_bytes!("shell");
+pub const USER_PROGRAM_REC_FIB: &[u8] = include_bytes!("rec_fib");
 
 use crate::println;
 use crate::print;
@@ -64,8 +64,7 @@ use x86_64::
 pub const USER_STACK_START: u64 = 0x800000;
 pub const USER_STACK_NUM_PAGES: u64 = 50;
 
-pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset: VirtAddr,
-                   frame_allocator: &mut impl FrameAllocator<Size4KiB>, kernel_pagetable_phys_addr: PhysAddr) -> Option<Task>
+pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_addr: PhysAddr) -> Option<Task>
 {
     let elf_header = parse_elf_binary(blob);
     if elf_header.is_none() { return None; }
@@ -89,16 +88,17 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
         return None;
     }
 
-    let pt = unsafe { memory::clone_page_table(kernel_pagetable_phys_addr, frame_allocator, phys_offset).unwrap() };
+    let pt = unsafe { memory::clone_page_table(kernel_pagetable_phys_addr, phys_offset).unwrap() };
     let pt_virt = phys_offset + pt.as_u64();
     let pt_ptr: *mut PageTable = pt_virt.as_mut_ptr();
     let mut process_mapper = unsafe { OffsetPageTable::new(&mut *pt_ptr, phys_offset) };
 
     for i in 0..elf_header.pht_num_entries
     {
+        println!("entry");
         let ph_offset = elf_header.pht_offset + (i as u64) * (elf_header.pht_entry_size as u64);
         let program_header = parse_elf_program_header(&blob[ph_offset as usize..]);
-        //print_elf_program_header(program_header);
+        print_elf_program_header(program_header);
         if program_header.segment_type == 1  // PT_LOAD segment
         {
             use x86_64::structures::paging::Page;
@@ -110,19 +110,23 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
             let page_range = Page::range_inclusive(start_page, end_page);
             assert!(size_file <= size_mem);
 
+            //println!("{}", size_mem);
+
             // Map pages
-            for (i, page) in page_range.enumerate() {
+            for (i, page) in page_range.enumerate()
+            {
                 let page_vaddr = page.start_address().as_u64();
+                println!("page: {}", page_vaddr);
 
                 let offset_in_segment = page_vaddr.saturating_sub(vaddr);
 
                 let flags = elf_flags_to_page_table_flags(program_header.flags);
                 //print_page_flags(flags);
-                let frame = frame_allocator.allocate_frame().unwrap();
+                let frame = memory::FRAME_ALLOCATOR.lock().allocate_frame().unwrap();
                 if frame.size() != 4096 { panic!("Assuming physical frame size is 4KB"); }
 
                 unsafe {
-                    process_mapper.map_to(page, frame, flags, frame_allocator).unwrap().flush();
+                    process_mapper.map_to(page, frame, flags, &mut *memory::FRAME_ALLOCATOR.lock()).unwrap().flush();
                 }
 
                 let dst = (phys_offset + frame.start_address().as_u64()).as_mut_ptr() as *mut u8;
@@ -167,12 +171,11 @@ pub fn create_task(blob: &[u8], mapper: &mut impl Mapper<Size4KiB>, phys_offset:
     // Reserve memory for stack space
     for i in 0..USER_STACK_NUM_PAGES
     {
-        let stack_phys_frame = frame_allocator.allocate_frame().unwrap();
+        let stack_phys_frame = memory::FRAME_ALLOCATOR.lock().allocate_frame().unwrap();
         let stack_virt_page = Page::containing_address(VirtAddr::new(USER_STACK_START + i * 4096));
         let stack_flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
         unsafe {
-            process_mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
-            //mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, frame_allocator).unwrap().flush();
+            process_mapper.map_to(stack_virt_page, stack_phys_frame, stack_flags, &mut *memory::FRAME_ALLOCATOR.lock()).unwrap().flush();
         }
     }
 

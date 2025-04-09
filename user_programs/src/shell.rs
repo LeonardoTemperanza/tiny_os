@@ -23,8 +23,67 @@ pub extern "C" fn _start()
     println("Welcome to TinyOS! I'm a user-program \"shell\".");
     println("Type 'help' for a list of available commands.");
 
-    print_num(3);
-    println("");
+    let mut buffer: [u8; 512] = [0; 512];
+    let mut buf_idx = 0;
+    loop
+    {
+        let input_char = read_char();
+        print_char(input_char);
+        if input_char as u8 == 0x08 // Backspace
+        {
+            if buf_idx > 0 {
+                buf_idx -= 1;
+            }
+        }
+        else if input_char == '\n'
+        {
+            if let Ok(input_string) = core::str::from_utf8(&buffer[..buf_idx]) {
+                run_command(input_string);
+            }
 
-    loop {}
+            buf_idx = 0;
+        }
+        else
+        {
+            buffer[buf_idx] = input_char as u8;
+
+            if buf_idx < buffer.len() - 1 {
+                buf_idx += 1;
+            }
+        }
+    }
+}
+
+pub fn run_command(input: &str)
+{
+    if input == "" { return; }
+
+    if input == "help"
+    {
+        println("  -HELP-");
+        println("  Here's the list of available commands:");
+        println("  help -- this command.");
+        println("  run [task_name] -- launches a new task in parallel.");
+        println("                     Task names: shell, rec_fib.");
+        println("  shutdown -- turns off this PC. (only works for QEMU)");
+    }
+    else if input == "shutdown"
+    {
+        println("Shutting down system...");
+        shutdown();
+    }
+    else
+    {
+        if input.starts_with("run ")
+        {
+            let program_name = &input[4..];
+            let ok = create_task(program_name);
+            if ok { println("Successfully launched the task."); }
+            else  { println("Failed to create task."); }
+        }
+        else
+        {
+            println("Unrecognized command. Type 'help' for a list of available commands.");
+        }
+    }
 }

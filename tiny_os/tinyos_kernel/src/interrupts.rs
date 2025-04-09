@@ -1,5 +1,5 @@
 
-use crate::{gdt, hlt_loop, print, println, process, interrupts};
+use crate::{gdt, hlt_loop, print, println, process, interrupts, memory};
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin;
@@ -169,10 +169,13 @@ unsafe extern "sysv64" fn syscall_alloc_stack(arg0: u64, arg1: u64, arg2: u64, a
 
     unsafe
     {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
+        PICS.lock().notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
     }
     return retval;
+}
+
+lazy_static! {
+    pub static ref STDIN: spin::Mutex<Vec::<u8>> = spin::Mutex::new(Vec::new());
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame)
@@ -199,10 +202,10 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     {
         if let Some(key) = keyboard.process_keyevent(key_event)
         {
-            //match key {
-                //DecodedKey::Unicode(character) => print!("{}", character),
-                //DecodedKey::RawKey(key) => print!("{:?}", key),
-            //}
+            match key {
+                DecodedKey::Unicode(character) => STDIN.lock().push(character as u8),
+                DecodedKey::RawKey(key) => {},
+            }
         }
     }
 
@@ -221,7 +224,11 @@ pub enum Syscall
 {
     Print = 1,
     PrintNum = 2,
-    Exit = 3,
+    PrintChar = 3,
+    ReadChar = 4,
+    CreateTask = 5,
+    Exit = 6,
+    Shutdown = 7,
 }
 
 #[inline(never)]
@@ -243,7 +250,11 @@ extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u6
     {
         x if x == Syscall::Print as u64 => sys_print(arg0, arg1),
         x if x == Syscall::PrintNum as u64 => sys_print_num(arg0),
-        x if x == Syscall::Exit as u64  => sys_exit(arg0),
+        x if x == Syscall::PrintChar as u64 => sys_print_char(arg0),
+        x if x == Syscall::ReadChar as u64 => sys_read_char(),
+        x if x == Syscall::CreateTask as u64 => sys_create_task(arg0, arg1),
+        x if x == Syscall::Exit as u64 => sys_exit(arg0),
+        x if x == Syscall::Shutdown as u64 => sys_shutdown(),
         //0x1338 => sys_getline(arg0, arg1),
         //0x8EAD => sys_read(arg0, arg1, arg2),
         _ => syscall_unhandled(),
@@ -269,9 +280,12 @@ extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u6
     return retval;
 }
 
+// TODO: For all of these usermode functions,
+// for security we should sanitize all user arguments
+// to make sure that they're actually userspace addresses
+
 fn sys_print(str_ptr: u64, str_len: u64) -> u64
 {
-    // TODO: Check that str_ptr is a usermode address!
 
     unsafe {
         let string = core::slice::from_raw_parts(str_ptr as *const u8, str_len as usize);
@@ -288,17 +302,71 @@ fn sys_print_num(val: u64) -> u64
     return 0;
 }
 
+fn sys_print_char(c: u64) -> u64
+{
+    if let Some(c) = char::from_u32(c as u32) {
+        print!("{}", c);
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+fn sys_read_char() -> u64
+{
+    let mut stdin = STDIN.lock();
+    if stdin.len() <= 0 { return 0; }
+    return stdin.remove(0) as u64;
+}
+
+fn sys_create_task(task_name_ptr: u64, task_name_len: u64) -> u64
+{
+    unsafe {
+        let string = core::slice::from_raw_parts(task_name_ptr as *const u8, task_name_len as usize);
+        let string = core::str::from_utf8_unchecked(string);
+
+        if string == "shell"
+        {
+            {
+                //let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
+                //let task = process::create_task(process::USER_PROGRAM_SHELL, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr);
+                //process::SCHEDULER.schedule_task(task.unwrap());
+            }
+            return 1;
+        }
+        else if string == "rec_fib"
+        {
+            {
+                //let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
+                //let task = process::create_task(process::USER_PROGRAM_REC_FIB, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr);
+                //process::SCHEDULER.schedule_task(task.unwrap());
+            }
+            return 1;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+}
+
 fn sys_exit(val: u64) -> u64
 {
-    process::SCHEDULER.remove_current_task();
-
     unsafe
     {
+        process::SCHEDULER.remove_current_task();
         PICS.lock().notify_end_of_interrupt(InterruptIndex::Syscall.as_u8());
         process::SCHEDULER.run_next_task();
     }
 
     return val;
+}
+
+fn sys_shutdown() -> u64
+{
+    // NOTE: Only works in QEMU.
+    unsafe { x86_64::instructions::port::Port::new(0x604).write(0x2000_u16) };
+    return 0;
 }
 
 fn syscall_unhandled() -> u64

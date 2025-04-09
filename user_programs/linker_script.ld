@@ -8,7 +8,7 @@ PHDRS {
 }
 
 SECTIONS {
-  . = 0x500000;
+  . = 0x000000005000000;
 
   .text : ALIGN(0x1000) {
     *(.text)

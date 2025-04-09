@@ -80,12 +80,26 @@ impl Writer
 {
     /// Writes an ASCII byte to the buffer.
     ///
-    /// Wraps lines at `BUFFER_WIDTH`. Supports the `\n` newline character.
+    /// Wraps lines at `BUFFER_WIDTH`. Supports the `\n` newline character and the backspace character.
     pub fn write_byte(&mut self, byte: u8)
     {
         match byte
         {
             b'\n' => self.new_line(),
+            0x08 =>  // Backspace
+            {
+                if self.column_position > 0 {
+                    self.column_position -= 1;
+                    let row = BUFFER_HEIGHT - 1;
+                    let col = self.column_position;
+                    let color_code = self.color_code;
+
+                    self.buffer.chars[row][col].write(ScreenChar {
+                        ascii_character: b' ',
+                        color_code,
+                    });
+                }
+            }
             byte =>
             {
                 if self.column_position >= BUFFER_WIDTH {
@@ -111,8 +125,8 @@ impl Writer
         {
             match byte
             {
-                // Printable ASCII byte or newline
-                0x20..=0x7e | b'\n' => self.write_byte(byte),
+                // Printable ASCII byte or newline or backspace
+                0x20..=0x7e | b'\n' | 0x08 => self.write_byte(byte),
                 // Non printable
                 _ => self.write_byte(0xfe),
             }

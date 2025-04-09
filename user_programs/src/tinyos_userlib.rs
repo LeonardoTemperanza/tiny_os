@@ -28,8 +28,11 @@ enum Syscall
 {
     Print = 1,
     PrintNum = 2,
-    CreateTask = 3,
-    Exit = 4,
+    PrintChar = 3,
+    ReadChar = 4,
+    CreateTask = 5,
+    Exit = 6,
+    Shutdown = 7,
 }
 
 pub fn print(string: &str)
@@ -40,6 +43,11 @@ pub fn print(string: &str)
 pub fn print_num(num: u64)
 {
     syscall(Syscall::PrintNum as u64, num, 0, 0, 0);
+}
+
+pub fn print_char(c: char)
+{
+    syscall(Syscall::PrintChar as u64, c as u64, 0, 0, 0);
 }
 
 pub fn println(string: &str)
@@ -53,12 +61,40 @@ pub fn exit(val: u64)
     syscall(Syscall::Exit as u64, val, 0, 0, 0);
 }
 
-pub fn create_task(task_name: &str)
+pub fn shutdown()
 {
-    //syscall(Syscall::CreateTask as u64, task_name.as_ptr());
+    syscall(Syscall::Shutdown as u64, 0, 0, 0, 0);
 }
 
-pub fn read_next_line()
+pub fn create_task(task_name: &str) -> bool
 {
+    return unsafe { core::mem::transmute(syscall(Syscall::CreateTask as u64, task_name.as_ptr() as *const u8 as u64, task_name.len() as u64, 0, 0) as u8) };
+}
 
+pub fn read_char() -> char
+{
+    loop
+    {
+        let res = syscall(Syscall::ReadChar as u64, 0, 0, 0, 0);
+        if res != 0 { return res as u8 as char; }
+    }
+}
+
+pub fn read_next_line(buffer: &mut [u8]) -> &str
+{
+    let mut cur_idx = 0;
+    loop
+    {
+        let next_char = read_char() as u8;
+        if next_char == 0 { continue; }
+        if next_char == '\n' as u8 { break; }
+
+        cur_idx += 1;
+    }
+
+    if let Ok(input) = core::str::from_utf8(buffer) {
+        return input;
+    } else {
+        return "";
+    }
 }

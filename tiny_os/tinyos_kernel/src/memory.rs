@@ -1,4 +1,5 @@
 
+use lazy_static::lazy_static;
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use crate::println;
 use x86_64::
@@ -39,19 +40,19 @@ pub unsafe fn active_level_4_table_addr() -> PhysAddr
     return phys;
 }
 
-pub unsafe fn clone_page_table(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr) -> Option<PhysAddr>
+pub unsafe fn clone_page_table(phys_addr: PhysAddr, phys_offset: VirtAddr) -> Option<PhysAddr>
 {
-    return unsafe { clone_page_table_rec(phys_addr, frame_allocator, phys_offset, 4) };
+    return unsafe { clone_page_table_rec(phys_addr, phys_offset, 4) };
 }
 
-unsafe fn clone_page_table_rec(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr, level: u8) -> Option<PhysAddr>
+unsafe fn clone_page_table_rec(phys_addr: PhysAddr, phys_offset: VirtAddr, level: u8) -> Option<PhysAddr>
 {
     if level <= 0 || level > 4 { panic!("Invalid level"); }
 
     let table_virt_addr = phys_offset + phys_addr.as_u64();
     let original_table = unsafe { &*table_virt_addr.as_ptr::<PageTable>() };
 
-    let new_table_frame = frame_allocator.allocate_frame().expect("Phys frame allocation failed");
+    let new_table_frame = FRAME_ALLOCATOR.lock().allocate_frame().expect("Phys frame allocation failed");
     let new_table_phys_addr = new_table_frame.start_address();
     let new_table_virt_addr = phys_offset + new_table_phys_addr.as_u64();
 
@@ -71,7 +72,7 @@ unsafe fn clone_page_table_rec(phys_addr: PhysAddr, frame_allocator: &mut impl F
         }
         else
         {
-            let res = unsafe { clone_page_table_rec(entry_phys_addr, frame_allocator, phys_offset, level - 1) };
+            let res = unsafe { clone_page_table_rec(entry_phys_addr, phys_offset, level - 1) };
             if let Some(new_subtable_phys) = res
             {
                 new_table[i].set_addr(new_subtable_phys, entry.flags());
@@ -80,29 +81,6 @@ unsafe fn clone_page_table_rec(phys_addr: PhysAddr, frame_allocator: &mut impl F
     }
 
     return Some(new_table_phys_addr);
-}
-
-pub unsafe fn shallow_clone_page_table(phys_addr: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, phys_offset: VirtAddr) -> PhysAddr
-{
-    let table_virt_addr = phys_offset + phys_addr.as_u64();
-    let original_table = unsafe { &*table_virt_addr.as_ptr::<PageTable>() };
-
-    let new_table_frame = frame_allocator.allocate_frame().expect("Phys frame allocation failed");
-    let new_table_phys_addr = new_table_frame.start_address();
-    let new_table_virt_addr = phys_offset + new_table_phys_addr.as_u64();
-
-    let new_table = unsafe { &mut *new_table_virt_addr.as_mut_ptr::<PageTable>() };
-    new_table.zero();
-
-    for (i, entry) in original_table.iter().enumerate()
-    {
-        if entry.is_unused() { continue; }
-        if !entry.flags().contains(PageTableFlags::PRESENT) { continue; }
-
-        new_table[i] = entry.clone();
-    }
-
-    return new_table_phys_addr;
 }
 
 pub unsafe fn activate_page_table(page_table_phys: PhysAddr)
@@ -133,16 +111,26 @@ pub unsafe fn enable_page_table(table: PageTable)
 
 pub struct BootInfoFrameAllocator
 {
-    memory_map: &'static MemoryMap,
+    memory_map: Option<&'static MemoryMap>,
     next: usize,
 }
 
+pub static FRAME_ALLOCATOR: spin::Mutex<BootInfoFrameAllocator> = spin::Mutex::new(BootInfoFrameAllocator::new());
+
 impl BootInfoFrameAllocator
 {
+    pub const fn new() -> Self
+    {
+        return BootInfoFrameAllocator {
+            memory_map: None,
+            next: 0,
+        }
+    }
+
     pub unsafe fn init(memory_map: &'static MemoryMap) -> Self
     {
         BootInfoFrameAllocator {
-            memory_map,
+            memory_map: Some(memory_map),
             next: 0,
         }
     }
@@ -150,7 +138,7 @@ impl BootInfoFrameAllocator
     fn usable_frames(&self) -> impl Iterator<Item = PhysFrame>
     {
         // get usable regions from memory map
-        let regions = self.memory_map.iter();
+        let regions = self.memory_map.unwrap().iter();
         let usable_regions = regions.filter(|r| r.region_type == MemoryRegionType::Usable);
         // map each region to its address range
         let addr_ranges = usable_regions.map(|r| r.range.start_addr()..r.range.end_addr());
@@ -169,4 +157,25 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator
         self.next += 1;
         return frame;
     }
+}
+
+pub struct KernelMemInfo
+{
+    pub phys_offset: VirtAddr,
+    pub kernel_page_table_phys_addr: PhysAddr,  // This is used as a "template" for other page tables
+}
+
+impl KernelMemInfo
+{
+    pub fn new() -> Self
+    {
+        return KernelMemInfo {
+            phys_offset: VirtAddr::new(0),
+            kernel_page_table_phys_addr: PhysAddr::new(0)
+        }
+    }
+}
+
+lazy_static! {
+    pub static ref KERNEL_MEM_INFO: spin::Mutex<KernelMemInfo> = spin::Mutex::new(KernelMemInfo::new());
 }

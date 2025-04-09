@@ -1,0 +1,1 @@
+MutexGuard<'_, BootInfoFrameAllocator>: x86_64::structures::paging::FrameAllocator<x86_64::structures::paging::Size4KiB>

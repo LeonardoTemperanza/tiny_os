@@ -1,4 +1,5 @@
 
+use crate::memory;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 use buddy_system_allocator::LockedHeap;
@@ -15,8 +16,7 @@ pub const KERNEL_HEAP_SIZE:  usize = 100 * 1024; // 100 KiB
 #[global_allocator]
 static ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
 
-pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
-                 frame_allocator: &mut impl FrameAllocator<Size4KiB>)
+pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>)
                  -> Result<(), MapToError<Size4KiB>>
 {
     let page_range =
@@ -30,11 +30,12 @@ pub fn init_heap(mapper: &mut impl Mapper<Size4KiB>,
 
     for page in page_range
     {
-        let frame = frame_allocator
+        let frame = memory::FRAME_ALLOCATOR
+            .lock()
             .allocate_frame()
             .ok_or(MapToError::FrameAllocationFailed)?;
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-        unsafe { mapper.map_to(page, frame, flags, frame_allocator)?.flush() };
+        unsafe { mapper.map_to(page, frame, flags, &mut *memory::FRAME_ALLOCATOR.lock())?.flush() };
     }
 
     unsafe {
