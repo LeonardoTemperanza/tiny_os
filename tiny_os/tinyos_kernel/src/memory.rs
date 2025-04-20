@@ -159,6 +159,7 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct KernelMemInfo
 {
     pub phys_offset: VirtAddr,

@@ -1,6 +1,6 @@
 
 pub const USER_PROGRAM_SHELL: &[u8] = include_bytes!("shell");
-pub const USER_PROGRAM_REC_FIB: &[u8] = include_bytes!("rec_fib");
+//pub const USER_PROGRAM_REC_FIB: &[u8] = include_bytes!("rec_fib");
 
 use crate::println;
 use crate::print;
@@ -64,7 +64,7 @@ use x86_64::
 pub const USER_STACK_START: u64 = 0x800000;
 pub const USER_STACK_NUM_PAGES: u64 = 50;
 
-pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_addr: PhysAddr) -> Option<Task>
+pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_addr: PhysAddr, arg0: u64) -> Option<Task>
 {
     let elf_header = parse_elf_binary(blob);
     if elf_header.is_none() { return None; }
@@ -95,7 +95,6 @@ pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_add
 
     for i in 0..elf_header.pht_num_entries
     {
-        println!("entry");
         let ph_offset = elf_header.pht_offset + (i as u64) * (elf_header.pht_entry_size as u64);
         let program_header = parse_elf_program_header(&blob[ph_offset as usize..]);
         print_elf_program_header(program_header);
@@ -116,7 +115,6 @@ pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_add
             for (i, page) in page_range.enumerate()
             {
                 let page_vaddr = page.start_address().as_u64();
-                println!("page: {}", page_vaddr);
 
                 let offset_in_segment = page_vaddr.saturating_sub(vaddr);
 
@@ -185,6 +183,7 @@ pub fn create_task(blob: &[u8], phys_offset: VirtAddr, kernel_pagetable_phys_add
         start_instr: VirtAddr::new(elf_header.entry_vaddr),
         stack_end: VirtAddr::new(USER_STACK_START + USER_STACK_NUM_PAGES * 4096 - 1),
         page_table: pt,
+        arg0,
     });
 }
 
@@ -259,6 +258,7 @@ pub struct Task
     pub start_instr: VirtAddr,
     pub stack_end:   VirtAddr,
     pub page_table:  PhysAddr,
+    pub arg0:        u64
 }
 
 impl Drop for Task
@@ -286,7 +286,19 @@ impl Scheduler
 
     pub fn schedule_task(&self, task: Task)
     {
+        println!("About to schedule task");
         self.tasks.lock().push(task);
+    }
+
+    pub fn get_current_task_arg0(&self) -> u64
+    {
+        let tasks = self.tasks.lock();
+        let cur_task_opt = self.cur_task.lock();
+        if let Some(cur_task) = *cur_task_opt {
+            return tasks[cur_task].arg0;
+        }
+
+        return 0;
     }
 
     pub fn remove_current_task(&self)
@@ -360,11 +372,9 @@ impl Scheduler
             )
         };
 
-        //println!("About to activate_page_table");
         unsafe { memory::activate_page_table(page_table) };
 
         if !started {
-            println!("About to init and jump to usercode");
             unsafe { init_and_jump_to_usercode(start_instr, stack_end) };
         } else {
             unsafe { restore_context_and_return_from_interrupt(&ctx) };
@@ -397,6 +407,32 @@ pub struct Context
     pub rflags: u64,
     pub rsp: u64,
     pub ss: u64,
+}
+
+fn print_ctx(ctx: &Context)
+{
+    print!("
+        rbp: {},
+        rax: {},
+        rbx: {},
+        rcx: {},
+        rdx: {},
+        rsi: {},
+        rdi: {},
+        r8: {},
+        r9: {},
+        r10: {},
+        r11: {},
+        r12: {},
+        r13: {},
+        r14: {},
+        r15: {},
+        rip: {},
+        cs: {},
+        rflags: {},
+        rsp: {},
+        ss: {},",
+        ctx.rbp, ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx, ctx.rsi, ctx.rdi, ctx.r8, ctx.r9, ctx.r10, ctx.r11, ctx.r12, ctx.r13, ctx.r14, ctx.r15, ctx.rip, ctx.cs, ctx.rflags, ctx.rsp, ctx.ss);
 }
 
 #[inline(always)]

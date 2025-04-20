@@ -46,7 +46,6 @@ lazy_static!
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
 
-
         unsafe {
             idt[InterruptIndex::Timer.as_usize()].set_handler_fn(
                 core::mem::transmute::<
@@ -162,10 +161,12 @@ unsafe extern "sysv64" fn syscall_alloc_stack(arg0: u64, arg1: u64, arg2: u64, a
 {
     //println!("syscall: {}, {}, {}, {}, {}", arg0, arg1, arg2, arg3, syscall);
 
+    /*
     let syscall_stack: Vec<u8> = Vec::with_capacity(0x10000);
     let stack_ptr = syscall_stack.as_ptr();
-    let retval = handle_syscall_with_temp_stack(arg0, arg1, arg2, arg3, syscall, stack_ptr);
-    drop(syscall_stack);
+    */
+    let retval = handle_syscall_with_temp_stack(arg0, arg1, arg2, arg3, syscall);
+    //drop(syscall_stack);
 
     unsafe
     {
@@ -227,12 +228,13 @@ pub enum Syscall
     PrintChar = 3,
     ReadChar = 4,
     CreateTask = 5,
-    Exit = 6,
-    Shutdown = 7,
+    GetArg0 = 6,
+    Exit = 7,
+    Shutdown = 8,
 }
 
 #[inline(never)]
-extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64, temp_stack: *const u8) -> u64
+extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u64, arg3: u64, syscall: u64) -> u64
 {
 /*    let old_stack: *const u8;
     unsafe {
@@ -253,6 +255,7 @@ extern "sysv64" fn handle_syscall_with_temp_stack(arg0: u64, arg1: u64, arg2: u6
         x if x == Syscall::PrintChar as u64 => sys_print_char(arg0),
         x if x == Syscall::ReadChar as u64 => sys_read_char(),
         x if x == Syscall::CreateTask as u64 => sys_create_task(arg0, arg1),
+        x if x == Syscall::GetArg0 as u64 => sys_get_arg_0(),
         x if x == Syscall::Exit as u64 => sys_exit(arg0),
         x if x == Syscall::Shutdown as u64 => sys_shutdown(),
         //0x1338 => sys_getline(arg0, arg1),
@@ -327,20 +330,16 @@ fn sys_create_task(task_name_ptr: u64, task_name_len: u64) -> u64
 
         if string == "shell"
         {
-            {
-                //let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
-                //let task = process::create_task(process::USER_PROGRAM_SHELL, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr);
-                //process::SCHEDULER.schedule_task(task.unwrap());
-            }
+            let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
+            let task = process::create_task(process::USER_PROGRAM_SHELL, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr, 0);
+            process::SCHEDULER.schedule_task(task.unwrap());
             return 1;
         }
         else if string == "rec_fib"
         {
-            {
-                //let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
-                //let task = process::create_task(process::USER_PROGRAM_REC_FIB, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr);
-                //process::SCHEDULER.schedule_task(task.unwrap());
-            }
+            let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
+            let task = process::create_task(process::USER_PROGRAM_SHELL, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr, 1);
+            process::SCHEDULER.schedule_task(task.unwrap());
             return 1;
         }
         else
@@ -348,6 +347,11 @@ fn sys_create_task(task_name_ptr: u64, task_name_len: u64) -> u64
             return 0;
         }
     }
+}
+
+fn sys_get_arg_0() -> u64
+{
+    return process::SCHEDULER.get_current_task_arg0()
 }
 
 fn sys_exit(val: u64) -> u64

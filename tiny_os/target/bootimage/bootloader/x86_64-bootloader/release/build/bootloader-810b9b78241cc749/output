@@ -1,0 +1,7 @@
+cargo:rerun-if-changed=C:\work\tiny_os\tiny_os\tinyos_kernel\Cargo.toml
+cargo:rustc-link-search=native=C:\work\tiny_os\tiny_os\target\bootimage\bootloader\x86_64-bootloader\release\build\bootloader-810b9b78241cc749\out
+cargo:rustc-link-lib=static=kernel_bin-tinyos
+cargo:rerun-if-env-changed=KERNEL
+cargo:rerun-if-env-changed=KERNEL_MANIFEST
+cargo:rerun-if-changed=\\?\C:\work\tiny_os\tiny_os\target\tinyos_x64_target\debug\tinyos
+cargo:rerun-if-changed=build.rs

@@ -1,0 +1,1 @@
+{"rustc":10544098503352302431,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[6416225275447290078,"build_script_build",false,2191585866594241250]],"local":[{"RerunIfChanged":{"output":"tinyos_x64_target\\debug\\build\\compiler_builtins-e600cbc6861614c0\\output","paths":["build.rs","configure.rs"]}}],"rustflags":[],"config":0,"compile_kind":0}

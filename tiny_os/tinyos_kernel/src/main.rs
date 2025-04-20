@@ -25,16 +25,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
 
     // Get memory info from boot loader
     let mut kernel_page_table;
-    let phys_offset;
-    let kernel_page_table_phys_addr;
     {
-        //let mut kernel_mem_info = memory::KERNEL_MEM_INFO.lock();
-        //kernel_mem_info.phys_offset = VirtAddr::new(boot_info.physical_memory_offset);
-        phys_offset = VirtAddr::new(boot_info.physical_memory_offset);
-        //kernel_page_table = unsafe { memory::init_kernel_page_table(kernel_mem_info.phys_offset) };
-        kernel_page_table = unsafe { memory::init_kernel_page_table(phys_offset) };
-        //kernel_mem_info.kernel_page_table_phys_addr = unsafe { memory::active_level_4_table_addr() };
-        kernel_page_table_phys_addr = unsafe { memory::active_level_4_table_addr() };
+        let mut kernel_mem_info = memory::KERNEL_MEM_INFO.lock();
+        (*kernel_mem_info).phys_offset = VirtAddr::new(boot_info.physical_memory_offset);
+        //phys_offset = VirtAddr::new(boot_info.physical_memory_offset);
+        kernel_page_table = unsafe { memory::init_kernel_page_table(kernel_mem_info.phys_offset) };
+        (*kernel_mem_info).kernel_page_table_phys_addr = unsafe { memory::active_level_4_table_addr() };
+        //kernel_page_table_phys_addr = unsafe { memory::active_level_4_table_addr() };
     }
 
     // Init frame allocator
@@ -46,8 +43,8 @@ fn kernel_main(boot_info: &'static BootInfo) -> !
     allocator::init_heap(&mut kernel_page_table).expect("Heap initialization failed.");
 
     {
-        //let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
-        let task = process::create_task(process::USER_PROGRAM_SHELL, phys_offset, kernel_page_table_phys_addr);
+        let kern_mem_info = memory::KERNEL_MEM_INFO.lock();
+        let task = process::create_task(process::USER_PROGRAM_SHELL, kern_mem_info.phys_offset, kern_mem_info.kernel_page_table_phys_addr, 0);
         println!("Created task.");
 
         process::SCHEDULER.schedule_task(task.unwrap());

@@ -19,5 +19,5 @@ buddy_system_allocator = "0.9.0"
 version = "1.0"
 features = ["spin_no_std"]
 
-#[package.metadata.bootloader]
-#physical-memory-offset = "0xC0000000"
+[package.metadata.bootloader]
+physical-memory-offset = "0xFFFF800000000000"

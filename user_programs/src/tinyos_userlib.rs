@@ -24,15 +24,16 @@ pub fn syscall(n: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64
 
 // NOTE: This should be kept up to date along with its
 // counterpart in kernel code.
-enum Syscall
+pub enum Syscall
 {
     Print = 1,
     PrintNum = 2,
     PrintChar = 3,
     ReadChar = 4,
     CreateTask = 5,
-    Exit = 6,
-    Shutdown = 7,
+    GetArg0 = 6,
+    Exit = 7,
+    Shutdown = 8,
 }
 
 pub fn print(string: &str)
@@ -69,6 +70,11 @@ pub fn shutdown()
 pub fn create_task(task_name: &str) -> bool
 {
     return unsafe { core::mem::transmute(syscall(Syscall::CreateTask as u64, task_name.as_ptr() as *const u8 as u64, task_name.len() as u64, 0, 0) as u8) };
+}
+
+pub fn get_arg_0() -> u64
+{
+    return syscall(Syscall::GetArg0 as u64, 0, 0, 0, 0);
 }
 
 pub fn read_char() -> char
